@@ -17,6 +17,9 @@ esp_now_peer_info_t peerInfo;
 // Velocidad de la tortuga al presionar las flechas (duty PWM 0..255)
 constexpr uint8_t TURTLE_SPEED = 180;
 
+// true = imprimir por Serial cuando dibujar la pantalla tarda mas de 20 ms
+constexpr bool DEBUG_TIMING = true;
+
 void sendMotor(uint8_t cmd, uint8_t speed) {
   MotorMsg msg = {MOTOR_MSG_MAGIC, cmd, speed};
   esp_err_t result = esp_now_send(turtleAddress, (uint8_t *)&msg, sizeof(msg));
@@ -149,6 +152,14 @@ bool isBluetoothConnected = false;
 int puntos = 0;       // 누적 점수 카운터
 int lastColor = -1;   // 이전에 나온 색상을 기억하여 중복을 방지하는 변수
 
+// Mascara de la nube (ui_img_nube.c, archivo C)
+extern "C" {
+LV_IMG_DECLARE(ui_img_nube);
+extern const lv_coord_t ui_img_nube_x;
+extern const lv_coord_t ui_img_nube_y;
+}
+lv_obj_t *ui_Nube4 = NULL;
+
 // 1. 점수를 화면(lblPOINT4)에 업데이트하는 함수
 void updatePuntosUI() {
     if (ui_lblPOINT4 != NULL) {
@@ -170,25 +181,31 @@ void generateRandomColor() {
     
     lastColor = newColor; // 새로 뽑은 색상을 저장
 
-    // 뽑힌 번호에 따라 텍스트 및 텍스트 색상(Style) 변경
-    switch (newColor) {
-        case 0:
-            lv_label_set_text(ui_lblCOLOR4, "ROJO");
-            lv_obj_set_style_text_color(ui_lblCOLOR4, lv_color_hex(0xFF0000), LV_PART_MAIN); // 빨간색
-            break;
-        case 1:
-            lv_label_set_text(ui_lblCOLOR4, "AMARILLO");
-            lv_obj_set_style_text_color(ui_lblCOLOR4, lv_color_hex(0xFFFF00), LV_PART_MAIN); // 노란색
-            break;
-        case 2:
-            lv_label_set_text(ui_lblCOLOR4, "VERDE");
-            lv_obj_set_style_text_color(ui_lblCOLOR4, lv_color_hex(0x00FF00), LV_PART_MAIN); // 초록색
-            break;
-        case 3:
-            lv_label_set_text(ui_lblCOLOR4, "AZUL");
-            lv_obj_set_style_text_color(ui_lblCOLOR4, lv_color_hex(0x0000FF), LV_PART_MAIN); // 파란색
-            break;
+    // La nube se pinta del color y el texto queda en blanco.
+    // Tonos un poco mas profundos que los puros para que el texto blanco se lea.
+    static const char *names[] = {"ROJO", "AMARILLO", "VERDE", "AZUL"};
+    static const uint32_t colors[] = {0xE8231E, 0xF2B200, 0x1FB83A, 0x1E5BFF};
+
+    lv_label_set_text(ui_lblCOLOR4, names[newColor]);
+    lv_obj_set_style_text_color(ui_lblCOLOR4, lv_color_hex(0xFFFFFF), LV_PART_MAIN);
+    if (ui_Nube4 != NULL) {
+        lv_obj_set_style_img_recolor(ui_Nube4, lv_color_hex(colors[newColor]), LV_PART_MAIN);
     }
+}
+
+// Relleno de color de la nube de MODO JUEGO: mascara con la forma del interior
+// de la nube del fondo (ui_img_nube.c, generada con tools/make_nube_mask.py).
+// LVGL pinta las imagenes ALPHA_8BIT con el color de img_recolor.
+void createNube() {
+    if (ui_MODO_JUEGO == NULL) return;
+
+    ui_Nube4 = lv_img_create(ui_MODO_JUEGO);
+    lv_img_set_src(ui_Nube4, &ui_img_nube);
+    lv_obj_set_pos(ui_Nube4, ui_img_nube_x, ui_img_nube_y);
+    lv_obj_clear_flag(ui_Nube4, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_img_recolor_opa(ui_Nube4, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_img_opa(ui_Nube4, 230, LV_PART_MAIN);
+    lv_obj_move_to_index(ui_Nube4, 1);  // justo encima del fondo, debajo del texto
 }
 
 // 3. 물리치료사 O (정답) 버튼 이벤트
@@ -436,6 +453,7 @@ void setup() {
 
   // SquareLine UI 로드
   ui_init(); //[cite: 42]
+  createNube();
 
   // TERMINAR 버튼 클릭 시 요약 화면 내용 업데이트
   if (ui_TERMINAR4 != NULL) {
@@ -481,10 +499,15 @@ void setup() {
 
 
 void loop() {
+  // El tiempo de LVGL sale de millis() (LV_TICK_CUSTOM 1 en lv_conf.h), no de
+  // lv_tick_inc(5): asi no se atrasa cuando dibujar tarda mas de 5 ms.
+  uint32_t t0 = millis();
   lv_timer_handler(); // LVGL 화면 업데이트 엔진 실행
-  // LVGL에게 5밀리초(ms)가 지났음을 알려줌 -> 터치 이벤트 & 화면 전환 애니메이션 작동
-  lv_tick_inc(5);
-  delay(5);
+  uint32_t dt = millis() - t0;
+  if (DEBUG_TIMING && dt > 20) {
+    Serial.printf("lv_timer_handler: %lu ms\n", (unsigned long)dt);
+  }
+  delay(2);
 
   updateTurtleArrows(); // flechas -> motor de la tortuga (ESP-NOW)
 
