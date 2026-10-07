@@ -1,12 +1,3 @@
-"""Genera ui_img_nube.c: mascara (LV_IMG_CF_ALPHA_8BIT) del interior de la nube
-del fondo de MODO JUEGO (ui_img_4_png.c).
-
-LVGL pinta las imagenes ALPHA_8BIT con el color de `img_recolor`, asi que en el
-.ino basta con cambiar ese color para que la nube sea roja/amarilla/verde/azul.
-
-Uso (desde la carpeta del sketch):  python tools/make_nube_mask.py
-Requiere numpy y Pillow. Volver a correrlo si cambia el fondo en SquareLine.
-"""
 import re
 from collections import deque
 
