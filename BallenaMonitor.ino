@@ -7,6 +7,7 @@
 #include <WiFi.h>    // WiFi 라이브러리
 #include <esp_wifi.h>
 #include "motor_protocol.h" // Tortuga XIAO와 동일한 파일 (tortuga-motor-test/src)
+#include "audio.h"           // musica y efectos (conector SPEAKER)
 
 // MAC del XIAO de la tortuga (la imprime su Serial: "XIAO MAC: ...").
 // Con FF:FF:FF:FF:FF:FF (broadcast) tambien funciona, sin conocer la MAC.
@@ -170,7 +171,8 @@ void updatePuntosUI() {
 }
 
 // 2. 랜덤 색상을 뽑고 텍스트와 글자 색상을 바꾸는 함수
-void generateRandomColor() {
+// speak = true: ademas se oye la voz con el nombre del color
+void generateRandomColor(bool speak = true) {
     if (ui_lblCOLOR4 == NULL) return;
 
     int newColor;
@@ -191,6 +193,11 @@ void generateRandomColor() {
     if (ui_Nube4 != NULL) {
         lv_obj_set_style_img_recolor(ui_Nube4, lv_color_hex(colors[newColor]), LV_PART_MAIN);
     }
+
+    static const Sfx voices[] = {SFX_ROJO, SFX_AMARILLO, SFX_VERDE, SFX_AZUL};
+    if (speak) {
+        audioPlaySfx(voices[newColor]);
+    }
 }
 
 // Relleno de color de la nube de MODO JUEGO: mascara con la forma del interior
@@ -206,6 +213,36 @@ void createNube() {
     lv_obj_set_style_img_recolor_opa(ui_Nube4, LV_OPA_COVER, LV_PART_MAIN);
     lv_obj_set_style_img_opa(ui_Nube4, 230, LV_PART_MAIN);
     lv_obj_move_to_index(ui_Nube4, 1);  // justo encima del fondo, debajo del texto
+}
+
+// Sonidos de los botones. Van en LV_EVENT_PRESSED (al tocar), no en CLICKED (al
+// soltar el dedo, que es donde SquareLine pone las acciones): asi se oyen sin retraso.
+static void bubbleEvent(lv_event_t * e) {
+    audioPlaySfx(SFX_BUBBLE);
+}
+
+static void palomitaSoundEvent(lv_event_t * e) {
+    audioPlaySfx(SFX_CORRECT);  // la voz del nuevo color va en fila detras
+}
+
+static void tacheSoundEvent(lv_event_t * e) {
+    audioPlaySfx(SFX_WRONG);
+}
+
+void addBubbleToButtons() {
+    lv_obj_t *screens[] = {ui_INICIO, ui_CONEXION_BLUETOOTH, ui_SELECCION_DE_MODO,
+                           ui_MODO_JUEGO, ui_MODO_REHABILITACION, ui_RESUMEN_DE_SESSION};
+    for (lv_obj_t *scr : screens) {
+        if (scr == NULL) continue;
+        for (uint32_t i = 0; i < lv_obj_get_child_cnt(scr); i++) {
+            lv_obj_t *child = lv_obj_get_child(scr, i);
+            if (lv_obj_check_type(child, &lv_btn_class) && child != ui_PALOMITA && child != ui_TACHE) {
+                lv_obj_add_event_cb(child, bubbleEvent, LV_EVENT_PRESSED, NULL);
+            }
+        }
+    }
+    if (ui_PALOMITA != NULL) lv_obj_add_event_cb(ui_PALOMITA, palomitaSoundEvent, LV_EVENT_PRESSED, NULL);
+    if (ui_TACHE != NULL) lv_obj_add_event_cb(ui_TACHE, tacheSoundEvent, LV_EVENT_PRESSED, NULL);
 }
 
 // 3. 물리치료사 O (정답) 버튼 이벤트
@@ -323,6 +360,7 @@ void ContinueSession(lv_event_t * e) {
         // 목표치에 도달하면 요약 화면으로 자동 전환
         if (progresoVal >= objetivoVal && !sessionCompleted) {
             sessionCompleted = true;
+            audioPlaySfx(SFX_CORRECT);
             // TERMINAR 버튼을 누르지 않고 자동 전환될 때도 재활 모드(2)임을 기억
             ultimoModo = 2;
             _ui_screen_change(&ui_RESUMEN_DE_SESSION, LV_SCR_LOAD_ANIM_FADE_ON, 500, 0, &ui_RESUMEN_DE_SESSION_screen_init);
@@ -401,6 +439,7 @@ void on_Rehab_Screen_Load(lv_event_t * e) {
 
 void setup() {
   Serial.begin(115200);
+  audioBegin();
 
   // --- ESP-NOW 설정 시작 ---
   WiFi.mode(WIFI_STA);
@@ -454,6 +493,7 @@ void setup() {
   // SquareLine UI 로드
   ui_init(); //[cite: 42]
   createNube();
+  addBubbleToButtons();
 
   // TERMINAR 버튼 클릭 시 요약 화면 내용 업데이트
   if (ui_TERMINAR4 != NULL) {
@@ -489,7 +529,7 @@ void setup() {
   // 게임 모드 (MODO JUEGO) 초기화
   puntos = 0;
   updatePuntosUI();
-  generateRandomColor();
+  generateRandomColor(false); // sin voz al arrancar
 
   // 기존 재활 모드 업데이트
   updateRehabUI(); 
@@ -510,6 +550,10 @@ void loop() {
   delay(2);
 
   updateTurtleArrows(); // flechas -> motor de la tortuga (ESP-NOW)
+
+  // Musica de fondo solo en las pantallas de juego y rehabilitacion
+  lv_obj_t *scr = lv_scr_act();
+  audioMusic(scr == ui_MODO_JUEGO || scr == ui_MODO_REHABILITACION);
 
   // 자동 화면 전환을 위한 타이머 변수 (전역 또는 static으로 선언)
   static unsigned long transitionDelayStart = 0;
